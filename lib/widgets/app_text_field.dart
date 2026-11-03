@@ -1,6 +1,3 @@
-import 'dart:async';
-import 'dart:math';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -18,13 +15,12 @@ class AppTextField extends StatefulWidget {
     this.hint,
     this.prefix,
     this.isPassword = false,
-    this.showCheck = false,
+    this.isValid,
     this.showCheckSpace = false,
     this.keyboardType,
     this.textCapitalization = TextCapitalization.none,
     this.textInputAction = TextInputAction.next,
     this.inputFormatters,
-    this.onChanged,
   });
 
   final TextEditingController controller;
@@ -33,91 +29,43 @@ class AppTextField extends StatefulWidget {
   final String? hint;
   final Widget? prefix;
   final bool isPassword;
-  final bool showCheck;
+  final bool Function()? isValid;
   final bool showCheckSpace;
   final TextInputType? keyboardType;
   final TextCapitalization textCapitalization;
   final TextInputAction textInputAction;
   final List<TextInputFormatter>? inputFormatters;
-  final ValueChanged<String>? onChanged;
 
   @override
   State<AppTextField> createState() => _AppTextFieldState();
 }
 
-class _AppTextFieldState extends State<AppTextField>
-    with WidgetsBindingObserver {
+class _AppTextFieldState extends State<AppTextField> {
   final focusNode = FocusNode();
   bool hidePassword = true;
-  Timer? timer;
-  double? scrollBeforeFocus;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    focusNode.addListener(onFocusChange);
+    focusNode.addListener(refresh);
     widget.controller.addListener(refresh);
   }
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     widget.controller.removeListener(refresh);
-    timer?.cancel();
     focusNode.dispose();
     super.dispose();
   }
 
   void refresh() => setState(() {});
 
-  void onFocusChange() {
-    refresh();
-    if (focusNode.hasFocus) {
-      scrollBeforeFocus = Scrollable.maybeOf(context)?.position.pixels;
-      scrollLater();
-    }
-  }
-
-  @override
-  void didChangeMetrics() {
-    if (focusNode.hasFocus) scrollLater();
-  }
-
-  void scrollLater() {
-    timer?.cancel();
-    timer = Timer(const Duration(milliseconds: 150), scrollAboveKeyboard);
-  }
-
-  // scrolls so the field ends 5px above the keyboard, flutter's own scroll
-  // to the cursor leaves a bigger gap so it is corrected here
-  void scrollAboveKeyboard() {
-    if (!mounted || !focusNode.hasFocus) return;
-
-    final scrollable = Scrollable.maybeOf(context);
-    final box = context.findRenderObject();
-    if (scrollable == null || box == null) return;
-    final viewport = RenderAbstractViewport.maybeOf(box);
-    if (viewport == null) return;
-
-    final position = scrollable.position;
-    final needed = viewport.getOffsetToReveal(box, 1).offset + 5;
-    final target = min(
-      max(needed, scrollBeforeFocus ?? position.pixels),
-      position.maxScrollExtent,
-    );
-
-    if ((target - position.pixels).abs() > 0.5) {
-      position.animateTo(
-        target,
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeOut,
-      );
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
+    return _RevealWholeField(child: field());
+  }
+
+  Widget field() {
     final hasPrefix = widget.prefix != null;
     final isUp = focusNode.hasFocus || widget.controller.text.isNotEmpty;
 
@@ -146,14 +94,25 @@ class _AppTextFieldState extends State<AppTextField>
                         top: isUp ? labelTop : 15,
                         left: 0,
                         right: 0,
-                        child: AnimatedDefaultTextStyle(
+                        // fixed line height keeps the text in the same place
+                        // when it shrinks to fit a narrow field
+                        child: AnimatedContainer(
                           duration: const Duration(milliseconds: 150),
-                          style: isUp ? AppText.label : AppText.hint,
-                          child: Text(
-                            isUp ? widget.label : (widget.hint ?? widget.label),
-                            maxLines: 1,
-                            softWrap: false,
-                            overflow: TextOverflow.ellipsis,
+                          height: isUp ? 14 : 19.6,
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: AnimatedDefaultTextStyle(
+                              duration: const Duration(milliseconds: 150),
+                              style: isUp ? AppText.label : AppText.hint,
+                              child: Text(
+                                isUp
+                                    ? widget.label
+                                    : (widget.hint ?? widget.label),
+                                maxLines: 1,
+                                softWrap: false,
+                              ),
+                            ),
                           ),
                         ),
                       ),
@@ -170,10 +129,8 @@ class _AppTextFieldState extends State<AppTextField>
                           textCapitalization: widget.textCapitalization,
                           textInputAction: widget.textInputAction,
                           inputFormatters: widget.inputFormatters,
-                          onChanged: widget.onChanged,
                           style: AppText.value,
                           cursorColor: AppColors.brand,
-                          scrollPadding: EdgeInsets.zero,
                           textAlignVertical: TextAlignVertical.center,
                           decoration: const InputDecoration(
                             isCollapsed: true,
@@ -218,7 +175,7 @@ class _AppTextFieldState extends State<AppTextField>
         child: SizedBox(
           width: 24,
           height: 24,
-          child: widget.showCheck
+          child: (widget.isValid?.call() ?? false)
               ? Center(
                   child: SvgPicture.asset(
                     'assets/icons/check_badge.svg',
@@ -232,5 +189,35 @@ class _AppTextFieldState extends State<AppTextField>
     }
 
     return const SizedBox(width: 10);
+  }
+}
+
+// Flutter scrolls the caret into view and adds room for the selection handle,
+// which puts the field about 34px above the keyboard. Replacing what it asks
+// to reveal with the whole field plus 5px makes that one scroll land exactly
+// 5px above the keyboard, so nothing has to correct it afterwards.
+class _RevealWholeField extends SingleChildRenderObjectWidget {
+  const _RevealWholeField({required super.child});
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderRevealWholeField();
+}
+
+class _RenderRevealWholeField extends RenderProxyBox {
+  static const gapAboveKeyboard = 5.0;
+
+  @override
+  void showOnScreen({
+    RenderObject? descendant,
+    Rect? rect,
+    Duration duration = Duration.zero,
+    Curve curve = Curves.ease,
+  }) {
+    super.showOnScreen(
+      rect: Rect.fromLTRB(0, 0, size.width, size.height + gapAboveKeyboard),
+      duration: duration,
+      curve: curve,
+    );
   }
 }

@@ -43,6 +43,17 @@ class _SignUpScreenState extends State<SignUpScreen> {
     LengthLimitingTextInputFormatter(9),
   ];
 
+  // only the button listens to this, so typing doesn't rebuild the whole screen
+  late final formChanges = Listenable.merge([
+    firstName,
+    lastName,
+    mobile,
+    altMobile,
+    email,
+    password,
+    confirmPassword,
+  ]);
+
   bool get isMobileValid => mobileRegex.hasMatch(mobile.text);
   bool get isAltMobileValid => mobileRegex.hasMatch(altMobile.text);
   bool get isEmailValid => emailRegex.hasMatch(email.text.trim());
@@ -70,8 +81,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
     super.dispose();
   }
 
-  void update() => setState(() {});
-
   Future<void> pickPhoto() async {
     final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
     if (picked == null) return;
@@ -89,10 +98,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
     final padding = MediaQuery.of(context).viewPadding;
     final keyboard = MediaQuery.of(context).viewInsets.bottom;
 
-    // the design has 44px status and navigation bars, android ones are
-    // usually smaller, so use at least 44 to keep the same spacing
-    final statusBar = max(padding.top, 44.0);
-    final navigationBar = max(padding.bottom, 44.0);
+    // the real bars of the device: home indicator, gesture or button bar, or
+    // nothing at all when the device has none
+    final statusBar = padding.top;
+    final navigationBar = padding.bottom;
 
     // button is 52 high and 20 above the navigation bar
     final buttonArea = navigationBar + 20 + 52;
@@ -128,8 +137,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
                   child: SingleChildScrollView(
                     // 30px minimum space above the button
                     padding: const EdgeInsets.fromLTRB(20, 0, 20, 30),
-                    keyboardDismissBehavior:
-                        ScrollViewKeyboardDismissBehavior.onDrag,
                     child: form(),
                   ),
                 ),
@@ -189,7 +196,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
                 label: '* First name',
                 keyboardType: TextInputType.name,
                 textCapitalization: TextCapitalization.words,
-                onChanged: (_) => update(),
               ),
             ),
             Expanded(
@@ -198,7 +204,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
                 label: '* Last name',
                 keyboardType: TextInputType.name,
                 textCapitalization: TextCapitalization.words,
-                onChanged: (_) => update(),
               ),
             ),
           ],
@@ -220,10 +225,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
                 onChanged: (value) => setState(() => mobileCountry = value),
               ),
               showCheckSpace: true,
-              showCheck: isMobileValid,
+              isValid: () => isMobileValid,
               keyboardType: TextInputType.phone,
               inputFormatters: phoneFormatters,
-              onChanged: (_) => update(),
             ),
           ],
         ),
@@ -243,10 +247,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
                 onChanged: (value) => setState(() => altCountry = value),
               ),
               showCheckSpace: true,
-              showCheck: isAltMobileValid,
+              isValid: () => isAltMobileValid,
               keyboardType: TextInputType.phone,
               inputFormatters: phoneFormatters,
-              onChanged: (_) => update(),
             ),
           ],
         ),
@@ -254,10 +257,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
           controller: email,
           label: '* Email address',
           showCheckSpace: true,
-          showCheck: isEmailValid,
+          isValid: () => isEmailValid,
           keyboardType: TextInputType.emailAddress,
           inputFormatters: [FilteringTextInputFormatter.deny(RegExp(r'\s'))],
-          onChanged: (_) => update(),
         ),
         Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -268,7 +270,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
               label: '* Password',
               isPassword: true,
               keyboardType: TextInputType.visiblePassword,
-              onChanged: (_) => update(),
             ),
             AppTextField(
               controller: confirmPassword,
@@ -276,7 +277,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
               isPassword: true,
               keyboardType: TextInputType.visiblePassword,
               textInputAction: TextInputAction.done,
-              onChanged: (_) => update(),
             ),
           ],
         ),
@@ -291,19 +291,27 @@ class _SignUpScreenState extends State<SignUpScreen> {
   Widget infoText(String text) {
     return SizedBox(
       height: 32,
-      child: Text(text, textAlign: TextAlign.center, style: AppText.info),
+      // the box height is fixed by the design, so on narrow screens the two
+      // lines shrink to fit instead of wrapping and being cut off
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Text(text, textAlign: TextAlign.center, style: AppText.info),
+      ),
     );
   }
 
   Widget submitButton() {
-    return Material(
-      color: canSubmit ? AppColors.brand : AppColors.lightGrey,
-      borderRadius: BorderRadius.circular(65),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: canSubmit ? submit : null,
-        child: const Center(
-          child: Text('Create my account', style: AppText.button),
+    return ListenableBuilder(
+      listenable: formChanges,
+      builder: (context, _) => Material(
+        color: canSubmit ? AppColors.brand : AppColors.lightGrey,
+        borderRadius: BorderRadius.circular(65),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: canSubmit ? submit : null,
+          child: const Center(
+            child: Text('Create my account', style: AppText.button),
+          ),
         ),
       ),
     );
